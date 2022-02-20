@@ -2,8 +2,8 @@
 
 ## Author
 
-<!-- Insert Your Name Here -->
+Gregory Buchenberger
 
 ## Description
 
-<!-- Describe your example here -->
+A simple monosynth for the Daisy Pod
