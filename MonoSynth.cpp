@@ -3,94 +3,97 @@
 #include <stdio.h>
 #include <string.h>
 
+// Interleaved audio
+#define LEFT (i)
+#define RIGHT (i + 1)
+
 using namespace daisy;
 using namespace daisysp;
 
-static DaisyPod   pod;
-static Oscillator osc, lfo;
+static DaisyPod pod;
+static Oscillator osc;
 static MoogLadder flt;
-static AdEnv      ad;
-static Parameter  pitchParam, cutoffParam, lfoParam;
+static AdEnv ad;
+static Parameter cutoffParam, resParam;
+static ReverbSc verb;
 
-int   wave, mode;
-float vibrato, oscFreq, lfoFreq, lfoAmp, attack, release, cutoff;
+bool gate;
+int wave, mode;
+float oscFreq, attack, release, cutoff, fltRes;
 float oldk1, oldk2, k1, k2;
-bool  selfCycle;
+bool selfCycle;
 
-void ConditionalParameter(float  oldVal,
-                          float  newVal,
+void ConditionalParameter(float oldVal,
+                          float newVal,
                           float &param,
-                          float  update);
+                          float update);
 
 void Controls();
-
 
 void NextSamples(float &sig)
 {
     float ad_out = ad.Process();
     sig = osc.Process();
-    sig = flt.Process(sig);
     sig *= ad_out;
+    sig = flt.Process(sig);
 }
 
-
-void AudioCallback(AudioHandle::InterleavingInputBuffer  in,
+void AudioCallback(AudioHandle::InterleavingInputBuffer in,
                    AudioHandle::InterleavingOutputBuffer out,
-                   size_t                                size)
+                   size_t size)
 {
-	   Controls();
-    
-    for(size_t i = 0; i < size; i += 2)
+    Controls();
+
+    for (size_t i = 0; i < size; i += 2)
     {
-		float sig;
+        float sig;
         NextSamples(sig);
-        
+        verb.Process(sig, sig, &out[LEFT], &out[RIGHT]);
         // left out
-        out[i] = sig;
+        // out[LEFT] = sig;
 
         // right out
-        out[i + 1] = sig;
+        // out[RIGHT] = sig;
     }
 }
 
 // Typical Switch case for Message Type.
 void HandleMidiMessage(MidiEvent midiEvent)
 {
-    switch(midiEvent.type)
+    switch (midiEvent.type)
     {
-        case NoteOn:
-        {
-            NoteOnEvent notOnEvent = midiEvent.AsNoteOn();
-            char        buff[512];
-            sprintf(buff,
-                    "Note Received:\t%d\t%d\t%d\r\n",
-                    midiEvent.channel,
-                    midiEvent.data[0],
-                    midiEvent.data[1]);
-            pod.seed.usb_handle.TransmitInternal((uint8_t *)buff, strlen(buff));
-            // This is to avoid Max/MSP Note outs for now..
-            if(midiEvent.data[1] != 0)
-            {
-                notOnEvent = midiEvent.AsNoteOn();
-                osc.SetFreq(mtof(notOnEvent.note));
-                osc.SetAmp((notOnEvent.velocity / 127.0f));
-                ad.Trigger();
-            }
-        }
+    case NoteOn:
+    {
+        gate = true;
+        NoteOnEvent noteOnEvent = midiEvent.AsNoteOn();
+        osc.SetFreq(mtof(noteOnEvent.note));
+        osc.SetAmp((noteOnEvent.velocity / 127.0f));
+        ad.Trigger();
+        // adsr.SetSustainLevel(.25);
+        // adsr.Retrigger(false);
+    }
+    case NoteOff:
+    {
+        gate = false;
+        // NoteOffEvent notOffEvent = midiEvent.AsNoteOff();
+    }
+    break;
+    default:
         break;
-        default: break;
     }
 }
-
 
 // Main -- Init, and Midi Handling
 int main(void)
 {
     // Init
     float samplerate;
-    oldk1 = 0;
-    k1 = 0;
-	cutoff = 10000;
+    oldk1 = oldk2 = 0;
+    k1 = k2 = 0;
+    attack    = .01f;
+    release   = .2f;
+    cutoff    = 10000;
+    mode = 0;
 
     pod.Init();
     pod.SetAudioBlockSize(4);
@@ -100,79 +103,146 @@ int main(void)
 
     osc.Init(samplerate);
     ad.Init(samplerate);
-	flt.Init(samplerate);
+    flt.Init(samplerate);
 
     // Synthesis
     samplerate = pod.AudioSampleRate();
 
     // Osc
-    osc.SetWaveform(osc.WAVE_POLYBLEP_TRI);
-    wave = osc.WAVE_POLYBLEP_TRI;
-    osc.SetAmp(1);
+    wave = osc.WAVE_SIN;
+    osc.SetWaveform(wave);
 
-	// Ladder
-	flt.SetFreq(10000);
-    flt.SetRes(0.8);
-    
-    
+    osc.SetAmp(0);
 
-    //Set envelope parameters
-    ad.SetTime(ADENV_SEG_ATTACK, 0.01);
-    ad.SetTime(ADENV_SEG_DECAY, 0.5);
+    // Ladder
+    flt.SetFreq(10000);
+    flt.SetRes(0.5);
+
+    // setup reverb
+    verb.Init(samplerate);
+    verb.SetFeedback(0.9f);
+    verb.SetLpFreq(18000.0f);
+
+    // Set AD envelope parameters
+    ad.SetTime(ADENV_SEG_ATTACK, 0.1);
+    ad.SetTime(ADENV_SEG_DECAY, 0.1);
     ad.SetMax(1);
     ad.SetMin(0);
     ad.SetCurve(0.5);
 
-    //set parameter parameters
+    // set parameter parameters
     cutoffParam.Init(pod.knob1, 100, 20000, cutoffParam.LOGARITHMIC);
-    
-	// Start stuff.
+    resParam.Init(pod.knob2, 0.01, 1, resParam.LOGARITHMIC);
+
+    // Start stuff.
     pod.StartAdc();
     pod.StartAudio(AudioCallback);
     pod.midi.StartReceive();
-    for(;;)
-    {
-        pod.midi.Listen();
+    while(1) {
+         pod.midi.Listen();
         // Handle MIDI Events
-        while(pod.midi.HasEvents())
+        while (pod.midi.HasEvents())
         {
             HandleMidiMessage(pod.midi.PopEvent());
         }
     }
 }
 
-///Updates values if knob had changed
-void ConditionalParameter(float  oldVal,
-                          float  newVal,
+/// Updates values if knob had changed
+void ConditionalParameter(float oldVal,
+                          float newVal,
                           float &param,
-                          float  update)
+                          float update)
 {
-    if(abs(oldVal - newVal) > 0.00005)
+    if (abs(oldVal - newVal) > 0.00005)
     {
         param = update;
     }
 }
 
+// Controls Helpers
+void UpdateEncoder()
+{
+    wave += pod.encoder.RisingEdge();
+    wave %= osc.WAVE_POLYBLEP_TRI;
+    osc.SetWaveform(wave);
 
+    mode += pod.encoder.Increment();
+    
+    if (mode > 1){
+        mode = 1;
+    }
+
+    if (mode < 0){
+        mode = 0;
+    }
+
+}
 
 void UpdateKnobs()
 {
     k1 = pod.knob1.Process();
-	ConditionalParameter(oldk1, k1, cutoff, cutoffParam.Process());
-    flt.SetFreq(cutoff);
+    k2 = pod.knob2.Process();
+
+    switch(mode)
+    {
+        case 0:
+            ConditionalParameter(oldk1, k1, cutoff, cutoffParam.Process());
+            ConditionalParameter(oldk2, k2, fltRes, resParam.Process());
+            flt.SetFreq(cutoff);
+            flt.SetRes(fltRes);
+            break;
+        case 1:
+            ConditionalParameter(oldk1, k1, attack, pod.knob1.Process());
+            ConditionalParameter(oldk2, k2, release, pod.knob2.Process());
+            ad.SetTime(ADENV_SEG_ATTACK, attack);
+            ad.SetTime(ADENV_SEG_DECAY, release);
+            break;
+        default: break;
+    }
 }
 
+void UpdateLeds()
+{
+    pod.led1.Set(mode == 2, mode == 1, mode == 0);
 
+    switch(wave){
+        case osc.WAVE_SIN:
+            pod.led2.Set(0, 0, 1);//blue
+            break;
+        case osc.WAVE_TRI:
+            pod.led2.Set(1, 1, 0);//yellow
+            break;
+        case osc.WAVE_SAW:
+            pod.led2.Set(1, 0, 1);//pink
+            break;
+        case osc.WAVE_RAMP:
+            pod.led2.Set(1, 0, 0);//red
+            break;
+        case osc.WAVE_SQUARE:
+            pod.led2.Set(0, 1, 0);//green
+            break;
+        default:
+            pod.led2.Set(1, 0, 1);
+            break;
+    }
 
+    oldk1 = k1;
+    oldk2 = k2;
+
+    pod.UpdateLeds();
+}
 
 
 void Controls()
 {
     pod.ProcessAnalogControls();
     pod.ProcessDigitalControls();
+
+    UpdateEncoder();
+
     UpdateKnobs();
 
+    UpdateLeds();
+
 }
-
-
-
