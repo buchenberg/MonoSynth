@@ -1,0 +1,14 @@
+{
+    "VsCodeTaskButtons.tasks": [
+        {
+            "label": "build and program",
+            "task": "build_and_program",
+            "tooltip": "",
+        },
+        {
+            "label" : "build and program dfu",
+            "task": "build_and_program_dfu",
+            "tooltip": "",
+        }
+    ]
+}
