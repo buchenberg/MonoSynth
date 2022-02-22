@@ -14,6 +14,8 @@ static DaisyPod pod;
 static Oscillator osc;
 static MoogLadder flt;
 static AdEnv ad;
+static Adsr adsr;
+static Metro      tick;
 static Parameter cutoffParam, resParam;
 static ReverbSc verb;
 
@@ -32,9 +34,11 @@ void Controls();
 
 void NextSamples(float &sig)
 {
-    float ad_out = ad.Process();
+    float adsr_out = adsr.Process(gate);
+    osc.SetAmp(adsr_out);
+    //float ad_out = ad.Process();
     sig = osc.Process();
-    sig *= ad_out;
+    //sig *= ad_out;
     sig = flt.Process(sig);
 }
 
@@ -44,16 +48,16 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer in,
 {
     Controls();
 
+    float sig;
+
     for (size_t i = 0; i < size; i += 2)
     {
-        float sig;
-        NextSamples(sig);
-        verb.Process(sig, sig, &out[LEFT], &out[RIGHT]);
-        // left out
-        // out[LEFT] = sig;
 
-        // right out
-        // out[RIGHT] = sig;
+        NextSamples(sig);
+
+        // Add reverb
+        verb.Process(sig, sig, &out[LEFT], &out[RIGHT]);
+
     }
 }
 
@@ -68,16 +72,15 @@ void HandleMidiMessage(MidiEvent midiEvent)
         NoteOnEvent noteOnEvent = midiEvent.AsNoteOn();
         osc.SetFreq(mtof(noteOnEvent.note));
         osc.SetAmp((noteOnEvent.velocity / 127.0f));
-        ad.Trigger();
-        // adsr.SetSustainLevel(.25);
-        // adsr.Retrigger(false);
+        // ad.Trigger();
+        break;
     }
     case NoteOff:
     {
         gate = false;
         // NoteOffEvent notOffEvent = midiEvent.AsNoteOff();
+        break;
     }
-    break;
     default:
         break;
     }
@@ -100,7 +103,7 @@ int main(void)
     samplerate = pod.AudioSampleRate();
     pod.seed.usb_handle.Init(UsbHandle::FS_INTERNAL);
     System::Delay(250);
-
+    adsr.Init(samplerate);
     osc.Init(samplerate);
     ad.Init(samplerate);
     flt.Init(samplerate);
@@ -111,17 +114,13 @@ int main(void)
     // Osc
     wave = osc.WAVE_SIN;
     osc.SetWaveform(wave);
+    osc.SetAmp(0.25);
 
-    osc.SetAmp(0);
-
-    // Ladder
-    flt.SetFreq(10000);
-    flt.SetRes(0.5);
-
-    // setup reverb
-    verb.Init(samplerate);
-    verb.SetFeedback(0.9f);
-    verb.SetLpFreq(18000.0f);
+    //Set ADSR envelope parameters
+    adsr.SetTime(ADSR_SEG_ATTACK, .1);
+    adsr.SetTime(ADSR_SEG_DECAY, .1);
+    adsr.SetTime(ADSR_SEG_RELEASE, .01);
+    adsr.SetSustainLevel(.25);
 
     // Set AD envelope parameters
     ad.SetTime(ADENV_SEG_ATTACK, 0.1);
@@ -130,7 +129,16 @@ int main(void)
     ad.SetMin(0);
     ad.SetCurve(0.5);
 
-    // set parameter parameters
+    // Ladder filter parameters
+    flt.SetFreq(10000);
+    flt.SetRes(0.5);
+
+    // Reverb parameters
+    verb.Init(samplerate);
+    verb.SetFeedback(0.9f);
+    verb.SetLpFreq(18000.0f);
+
+    // Parameter parameters
     cutoffParam.Init(pod.knob1, 100, 20000, cutoffParam.LOGARITHMIC);
     resParam.Init(pod.knob2, 0.01, 1, resParam.LOGARITHMIC);
 
@@ -138,6 +146,8 @@ int main(void)
     pod.StartAdc();
     pod.StartAudio(AudioCallback);
     pod.midi.StartReceive();
+
+    // Execute
     while(1) {
          pod.midi.Listen();
         // Handle MIDI Events
