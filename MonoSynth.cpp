@@ -21,8 +21,6 @@ bool gate;
 int wave, mode;
 float oscFreq, attack, release, cutoff, fltRes;
 float oldk1, oldk2, k1, k2;
-float sustain;
-bool selfCycle;
 float last_note;
 
 void ConditionalParameter(float oldVal,
@@ -64,7 +62,7 @@ bool CompareFloat(float x, float y, float epsilon = 0.01f)
         return true; // they are same
     return false;    // they are not same
 }
-// Typical Switch case for Message Type.
+
 void HandleMidiMessage(MidiEvent midiEvent)
 {
 
@@ -77,7 +75,6 @@ void HandleMidiMessage(MidiEvent midiEvent)
         last_note = (float)noteOnEvent.note;
         osc.SetFreq(mtof(noteOnEvent.note));
         adsr.SetSustainLevel((noteOnEvent.velocity / 127.0f));
-        osc.SetAmp((noteOnEvent.velocity / 127.0f));
         break;
     }
     case NoteOff:
@@ -93,7 +90,7 @@ void HandleMidiMessage(MidiEvent midiEvent)
         break;
     }
 }
-// Main -- Init, and Midi Handling
+
 int main(void)
 {
     // Init
@@ -104,7 +101,6 @@ int main(void)
     release = .2f;
     cutoff = 10000;
     mode = 0;
-    sustain = .25;
     last_note = 0;
 
     pod.Init(true);
@@ -128,7 +124,7 @@ int main(void)
     adsr.SetTime(ADSR_SEG_ATTACK, .1);
     adsr.SetTime(ADSR_SEG_DECAY, .1);
     adsr.SetTime(ADSR_SEG_RELEASE, .01);
-    adsr.SetSustainLevel(sustain);
+    adsr.SetSustainLevel(.25);
 
     // Ladder filter parameters
     flt.SetFreq(10000);
@@ -172,7 +168,6 @@ void ConditionalParameter(float oldVal,
     }
 }
 
-// Controls Helpers
 void UpdateEncoder()
 {
     wave += pod.encoder.RisingEdge();
