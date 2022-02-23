@@ -2,10 +2,9 @@
 #include "daisysp.h"
 #include <stdio.h>
 #include <string.h>
+#include "MonoSynth.h"
 
-// Interleaved audio
-#define LEFT (i)
-#define RIGHT (i + 1)
+
 
 using namespace daisy;
 using namespace daisysp;
@@ -21,7 +20,7 @@ bool gate;
 int wave, mode;
 float oscFreq, attack, release, cutoff, fltRes;
 float oldk1, oldk2, k1, k2;
-float last_note;
+uint8_t last_note;
 
 void ConditionalParameter(float oldVal,
                           float newVal,
@@ -56,13 +55,6 @@ void AudioCallback(AudioHandle::InterleavingInputBuffer in,
     }
 }
 
-bool CompareFloat(float x, float y, float epsilon = 0.01f)
-{
-    if (fabs(x - y) < epsilon)
-        return true; // they are same
-    return false;    // they are not same
-}
-
 void HandleMidiMessage(MidiEvent midiEvent)
 {
 
@@ -72,19 +64,43 @@ void HandleMidiMessage(MidiEvent midiEvent)
     {
         NoteOnEvent noteOnEvent = midiEvent.AsNoteOn();
         gate = true;
-        last_note = (float)noteOnEvent.note;
+        last_note = noteOnEvent.note;
         osc.SetFreq(mtof(noteOnEvent.note));
-        adsr.SetSustainLevel((noteOnEvent.velocity / 127.0f));
+        //adsr.SetSustainLevel((noteOnEvent.velocity / 127.0f));
         break;
     }
     case NoteOff:
     {
         NoteOffEvent noteOffEvent = midiEvent.AsNoteOff();
-        if (CompareFloat((float)noteOffEvent.note, last_note))
+        if (noteOffEvent.note == last_note)
         {
             gate = false;
         }
         break;
+    }
+    case ControlChange:
+    {
+        ControlChangeEvent p = midiEvent.AsControlChange();
+        switch (p.control_number)
+        {
+        case 1: // cutoff, 0-127 -> frequency
+            //flt.SetFreq(((float)p.value / 127.0f) * 1000);
+            break;
+        case 21: // res, 0-127
+            adsr.SetTime(ADSR_SEG_ATTACK, p.value / 127.0f);
+            break;
+        case 22: // res, 0-127
+            adsr.SetTime(ADSR_SEG_DECAY, p.value / 127.0f);
+            break;
+        case 23: // res, 0-127
+            adsr.SetSustainLevel(p.value / 127.0f);
+            break;
+        case 24:
+            adsr.SetTime(ADSR_SEG_RELEASE, p.value / 127.0f);
+            break;
+        default:
+            break;
+        }
     }
     default:
         break;
@@ -108,6 +124,7 @@ int main(void)
     samplerate = pod.AudioSampleRate();
     pod.seed.usb_handle.Init(UsbHandle::FS_INTERNAL);
     System::Delay(250);
+
     adsr.Init(samplerate);
     osc.Init(samplerate);
     flt.Init(samplerate);
